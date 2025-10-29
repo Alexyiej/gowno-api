@@ -1,1 +1,1 @@
-# gowno-api
+pip install fastapi uvicorn
