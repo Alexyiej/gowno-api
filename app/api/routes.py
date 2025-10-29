@@ -1,11 +1,8 @@
+
+
 from fastapi import APIRouter
-from app.models.item import Item
+from .get_data_router import router as get_data_router
 
 router = APIRouter()
 
-@router.get("/items", response_model=list[Item])
-async def get_items():
-    return [
-        Item(id=1, name="śrubka", price=0.99),
-        Item(id=2, name="młotek", price=12.50)
-    ]
+router.include_router(get_data_router, prefix="/api")
