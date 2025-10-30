@@ -3,7 +3,7 @@ from db.connection import engine
 
 
 
-async def calculate_and_store_kpis():
+def calculate_and_store_kpis():
     """Calculate KPIs and insert into fleet_kpis table"""
     with engine.begin() as conn:
         # 1) Total route changes across all routes
@@ -45,3 +45,6 @@ async def calculate_and_store_kpis():
         """), kpi_data)
 
         print("✅ KPIs calculated and stored:", kpi_data)
+
+
+calculate_and_store_kpis()

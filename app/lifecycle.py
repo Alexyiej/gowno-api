@@ -1,6 +1,6 @@
-
 # app/lifecycle.py
 import traceback
+import pandas as pd
 from db.planned_routes import create_table, table
 from db.connection import engine
 from data.load_data import load_csvs
@@ -26,6 +26,7 @@ async def load_and_process_data():
     locations['id'] = locations['id'].astype(int)
     routes_df['id'] = routes_df['id'].astype(int)
     routes_df['distance_km'] = routes_df['distance_km'].astype(float)
+    routes_df['start_datetime'] = pd.to_datetime(routes_df['start_datetime'])
 
     # Preprocess
     vehicles, locations, segments = clean_data(vehicles, locations, segments, locations_rel)
@@ -46,8 +47,9 @@ async def load_and_process_data():
             if v_idx < len(routes_df):
                 route_id = int(routes_df.iloc[v_idx]['id'])
                 distance = float(routes_df.iloc[v_idx]['distance_km'])
+                planned_date = routes_df.iloc[v_idx]['start_datetime']
             else:
-                route_id, distance = None, None
+                route_id, distance, planned_date = None, None, None
 
             for seq in range(len(route) - 1):
                 start_loc = int(route[seq])
@@ -61,14 +63,13 @@ async def load_and_process_data():
                         "route_sequence": int(seq),
                         "location_start_id": start_loc,
                         "location_end_id": end_loc,
-                        "distance_km": distance
+                        "distance_km": distance,
+                        "planned_date": planned_date
                     })
                 except Exception:
                     print(f"Error inserting row: vehicle {vehicle_id}, seq {seq}")
                     traceback.print_exc()
 
-
-# -------------------------------
 # Step 3: Run all startup tasks sequentially
 # -------------------------------
 async def run_startup_tasks():
