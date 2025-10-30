@@ -7,7 +7,6 @@ from data.load_data import load_csvs
 from routing.preprocessing import clean_data, location_stats, prepare_vrp_matrix
 from routing.clustering import perform_clustering
 from routing.solve_vrp import solve_vrp
-from kpi.kpi import calculate_and_store_kpis
 # -------------------------------
 # Step 0: DB initialization
 # -------------------------------
@@ -76,4 +75,3 @@ async def run_startup_tasks():
     """Call this from FastAPI lifespan"""
     await init_db()
     await load_and_process_data()
-    await calculate_and_store_kpis()
