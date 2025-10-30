@@ -1,6 +1,7 @@
 # app/lifecycle.py
 import traceback
 import pandas as pd
+from alerts.alerts_system import process_all_alerts
 from db.planned_routes import create_table, table
 from db.connection import engine
 from data.load_data import load_csvs
@@ -75,3 +76,4 @@ async def run_startup_tasks():
     """Call this from FastAPI lifespan"""
     await init_db()
     await load_and_process_data()
+    process_all_alerts()

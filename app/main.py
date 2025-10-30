@@ -96,6 +96,8 @@ from contextlib import asynccontextmanager
 from lifecycle import run_startup_tasks
 from db.planned_routes import table
 from db.connection import engine
+from alerts.alerts_system import vehicle_alerts_table
+from sqlalchemy import select
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -113,4 +115,9 @@ def read_root():
 def get_routes():
     with engine.connect() as conn:
         result = conn.execute(table.select())
+        return [dict(row._mapping) for row in result]
+@app.get("/alerts")
+def get_alerts():
+    with engine.connect() as conn:
+        result = conn.execute(select(vehicle_alerts_table))
         return [dict(row._mapping) for row in result]

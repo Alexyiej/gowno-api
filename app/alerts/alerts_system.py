@@ -1,97 +1,137 @@
-import sqlite3
+# app/alerts/vehicle_alerts.py
 from datetime import datetime
 import pandas as pd
-from load_data import load_csvs  # Twój plik load_data.py
+from sqlalchemy import Column, Integer, String, Float, DateTime, Table, MetaData
+from sqlalchemy.orm import sessionmaker
+from db.connection import engine
+from data.load_data import load_csvs
+from db.planned_routes import table as planned_table
 
-# --- KONFIGURACJA --- #
-DB_PATH = "data/fleet_alerts.db"
-WARNING_THRESHOLD = 0.9  # 90% limitu przed alertem ostrzegawczym
+# --- CONFIG ---
+WARNING_THRESHOLD = 0.9
+metadata = MetaData()
+Session = sessionmaker(bind=engine)
 
-# --- FUNKCJE --- #
+# --- ALERTS TABLE ---
+vehicle_alerts_table = Table(
+    "vehicle_alerts", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("vehicle_id", Integer, nullable=False),
+    Column("registration", String, nullable=False),
+    Column("service_interval_km", Integer, nullable=False),
+    Column("leasing_limit_km", Integer, nullable=False),
+    Column("total_mileage", Float, nullable=False),
+    Column("mileage_since_service", Float, nullable=False),
+    Column("type", String, nullable=False),
+    Column("description", String, nullable=False),
+    Column("created_at", DateTime, default=datetime.utcnow)
+)
+metadata.create_all(engine)
 
-def calculate_yearly_mileage(segments_df, routes_df, current_date):
-    """Oblicza przebieg pojazdów od początku bieżącego roku na podstawie tras zakończonych przed current_date."""
-    current_year = current_date.year
-    routes_df["start_datetime"] = pd.to_datetime(routes_df["start_datetime"], errors="coerce")
-    routes_df["end_datetime"] = pd.to_datetime(routes_df["end_datetime"], errors="coerce")
+# --- ALERT CALCULATION ---
+def process_all_alerts():
+    print("🚀 Starting alert processing...")
+    session = Session()
+    alerts_to_insert = []
 
-    # Filtrujemy trasy zakończone przed current_date i w bieżącym roku
-    completed_routes = routes_df[(routes_df["end_datetime"] <= current_date) & 
-                                 (routes_df["end_datetime"].dt.year == current_year)]
-    
-    # Sumujemy przebiegi po pojazdach (po ID segmentów)
-    if 'vehicle_id' not in segments_df.columns:
-        # Jeśli nie ma vehicle_id w segmentach, zakładamy jeden pojazd na trasę w testach
-        segments_df['vehicle_id'] = 1
-    
-    merged = segments_df.merge(completed_routes[['id', 'distance_km']], left_on='route_id', right_on='id', how='left')
-    yearly_mileage = merged.groupby('vehicle_id')['distance_km'].sum().reset_index()
-    yearly_mileage = yearly_mileage.rename(columns={'distance_km': 'total_mileage_year'})
-    return yearly_mileage
+    try:
+        # Load vehicles CSV
+        print("📥 Loading vehicles from CSV...")
+        try:
+            vehicles_df, *_ = load_csvs()  # only first DF
+            vehicles_df.columns = vehicles_df.columns.str.strip().str.lower()  # normalize columns
+            print(f"✅ Loaded {len(vehicles_df)} vehicles")
+        except Exception as e:
+            print(f"❌ Failed to load vehicles: {e}")
+            return
 
-def insert_alert_to_db(conn, brand, registration, total_mileage, mileage_since_service,
-                       service_interval, yearly_mileage, contract_limit, description):
-    """Wstawia pojedynczy alert do bazy danych."""
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO alerts
-        (brand, registration, total_mileage, mileage_since_service, service_interval, yearly_mileage, contract_limit, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    """, (brand, registration, total_mileage, mileage_since_service,
-          service_interval, yearly_mileage, contract_limit, description))
-    conn.commit()
+        # Ensure vehicle_id column exists
+        if 'id' in vehicles_df.columns:
+            vehicles_df.rename(columns={'id': 'vehicle_id'}, inplace=True)
+        elif 'vehicle_id' not in vehicles_df.columns:
+            print("⚠️ No 'Id' or 'vehicle_id' column in vehicles CSV, cannot match planned routes")
+            return
 
-def process_alerts(reference_date: str):
-    """Główna logika generowania alertów i zapisywania do DB."""
-    current_date = pd.to_datetime(reference_date)
+        # Load planned routes
+        print("📥 Loading planned routes from DB...")
+        try:
+            planned_routes_df = pd.read_sql(planned_table.select(), engine)
+            planned_routes_df['planned_date'] = pd.to_datetime(planned_routes_df['planned_date'], errors='coerce')
+            print(f"✅ Loaded {len(planned_routes_df)} planned routes")
+        except Exception as e:
+            print(f"❌ Failed to load planned routes: {e}")
+            return
 
-    # Wczytanie danych
-    locations_df, vehicles_df, segments_df, routes_df, location_relations_df = load_csvs()
+        # Total mileage per vehicle from planned routes
+        mileage_per_vehicle = planned_routes_df.groupby('vehicle_id')['distance_km'].sum().reset_index()
+        mileage_per_vehicle = mileage_per_vehicle.rename(columns={'distance_km': 'total_mileage'})
+        print("📊 Calculated total mileage per vehicle")
 
-    # Oblicz roczny przebieg
-    yearly_mileage_df = calculate_yearly_mileage(segments_df, routes_df, current_date)
-    vehicles_df = vehicles_df.merge(yearly_mileage_df, left_on='id', right_on='vehicle_id', how='left')
-    vehicles_df['total_mileage_year'] = vehicles_df['total_mileage_year'].fillna(0)
+        # Merge vehicles with total mileage using vehicle_id
+        vehicles_df = vehicles_df.merge(
+            mileage_per_vehicle,
+            on='vehicle_id',
+            how='left'
+        )
+        vehicles_df['total_mileage'] = vehicles_df['total_mileage'].fillna(0)
+        print("🔗 Merged vehicles with mileage")
 
-    # Połączenie z bazą danych
-    conn = sqlite3.connect(DB_PATH)
-    create_alerts_table(conn)
+        # Process alerts
+        for idx, row in vehicles_df.iterrows():
+            try:
+                vehicle_id = row.get('vehicle_id')
+                reg = row.get("registration_number", "UNKNOWN")
+                odometer = float(row.get("current_odometer_km", 0))
+                service_interval = float(row.get("service_interval_km", 10000))
+                contract_limit = float(row.get("leasing_limit_km", 50000))
+                total_mileage = odometer + float(row.get("total_mileage", 0))
+                mileage_since_service = total_mileage % service_interval if service_interval > 0 else 0
 
-    for _, row in vehicles_df.iterrows():
-        brand = row.get("brand")
-        reg = row.get("registration_number")
-        odometer = row.get("current_odometer_km", 0)
-        service_interval = row.get("service_interval_km", 10000)
-        contract_limit = row.get("leasing_limit_km", 50000)
-        yearly_mileage = row.get("total_mileage_year", 0)
+                alert_base = {
+                    'vehicle_id': vehicle_id,
+                    'registration': reg,
+                    'service_interval_km': service_interval,
+                    'leasing_limit_km': contract_limit,
+                    'total_mileage': total_mileage,
+                    'mileage_since_service': mileage_since_service,
+                    'created_at': datetime.utcnow()
+                }
 
-        # Całkowity przebieg uwzględniający trasy od początku roku
-        total_mileage = odometer + yearly_mileage
-        mileage_since_service = total_mileage % service_interval
+                # SERVICE ALERT
+                if service_interval > 0:
+                    if mileage_since_service >= service_interval:
+                        alert = alert_base.copy()
+                        alert.update({'type': 'SERWIS', 'description': 'Pojazd powinien być natychmiast serwisowany'})
+                        alerts_to_insert.append(alert)
+                    elif mileage_since_service >= service_interval * WARNING_THRESHOLD:
+                        alert = alert_base.copy()
+                        alert.update({'type': 'SERWIS', 'description': 'Pojazd będzie musiał być serwisowany wkrótce'})
+                        alerts_to_insert.append(alert)
 
-        # --- ALERT SERWISOWY ---
-        if mileage_since_service >= service_interval:
-            description = "Pojazd powinien być natychmiast serwisowany"
-            insert_alert_to_db(conn, brand, reg, total_mileage, mileage_since_service,
-                               service_interval, yearly_mileage, contract_limit, description)
-        elif mileage_since_service >= service_interval * WARNING_THRESHOLD:
-            description = "Pojazd będzie musiał być serwisowany wkrótce"
-            insert_alert_to_db(conn, brand, reg, total_mileage, mileage_since_service,
-                               service_interval, yearly_mileage, contract_limit, description)
+                # CONTRACT ALERT
+                if total_mileage >= contract_limit:
+                    alert = alert_base.copy()
+                    alert.update({'type': 'KONTRAKT', 'description': 'Pojazd przekroczył limit kontraktowy'})
+                    alerts_to_insert.append(alert)
+                elif total_mileage >= contract_limit * WARNING_THRESHOLD:
+                    alert = alert_base.copy()
+                    alert.update({'type': 'KONTRAKT', 'description': 'Pojazd zbliża się do limitu kontraktowego'})
+                    alerts_to_insert.append(alert)
 
-        # --- ALERT KONTRAKTOWY ---
-        if yearly_mileage >= contract_limit:
-            description = "Pojazd przekroczył limit kontraktowy"
-            insert_alert_to_db(conn, brand, reg, total_mileage, mileage_since_service,
-                               service_interval, yearly_mileage, contract_limit, description)
-        elif yearly_mileage >= contract_limit * WARNING_THRESHOLD:
-            description = "Pojazd zbliża się do limitu kontraktowego"
-            insert_alert_to_db(conn, brand, reg, total_mileage, mileage_since_service,
-                               service_interval, yearly_mileage, contract_limit, description)
+            except Exception as e:
+                print(f"❌ Failed to process vehicle row {idx} (vehicle_id={row.get('vehicle_id')}): {e}")
 
-    conn.close()
-    print("✅ Wszystkie alerty zostały przetworzone i zapisane do bazy danych.")
+        # Insert alerts
+        if alerts_to_insert:
+            session.execute(vehicle_alerts_table.insert(), alerts_to_insert)
+            session.commit()
+            print(f"✅ Inserted {len(alerts_to_insert)} alerts into database")
+        else:
+            print("ℹ️ No alerts generated")
 
-# --- TEST --- #
-if __name__ == "__main__":
-    process_alerts("2024-07-03")
+    except Exception as e:
+        print(f"❌ Error during alert processing: {e}")
+
+    finally:
+        session.close()
+        print("🏁 Alert processing finished")
