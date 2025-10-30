@@ -29,25 +29,6 @@ def calculate_yearly_mileage(segments_df, routes_df, current_date):
     yearly_mileage = yearly_mileage.rename(columns={'distance_km': 'total_mileage_year'})
     return yearly_mileage
 
-def create_alerts_table(conn):
-    """Tworzy tabelę alerts, jeśli nie istnieje."""
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            brand TEXT,
-            registration TEXT,
-            total_mileage REAL,
-            mileage_since_service REAL,
-            service_interval REAL,
-            yearly_mileage REAL,
-            contract_limit REAL,
-            description TEXT,
-            created_at TEXT
-        )
-    """)
-    conn.commit()
-
 def insert_alert_to_db(conn, brand, registration, total_mileage, mileage_since_service,
                        service_interval, yearly_mileage, contract_limit, description):
     """Wstawia pojedynczy alert do bazy danych."""
