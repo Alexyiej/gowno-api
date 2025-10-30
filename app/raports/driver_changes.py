@@ -1,4 +1,3 @@
-import json
 from app.data.load_data import load_csvs
 
 def driver_changes_top5():
@@ -22,7 +21,5 @@ def driver_changes_top5():
             "value": changes
         })
 
-    return json.dumps(chart_data, indent=4)
+    return chart_data
 
-if __name__ == "__main__":
-    print(driver_changes_top5())
