@@ -2,17 +2,24 @@
 import pandas as pd
 import numpy as np
 
-def clean_data(vehicles, locations, segments):
-    for col in ['leasing_start_date', 'leasing_end_date']:
-        if col in vehicles.columns:
-            vehicles[col] = pd.to_datetime(vehicles[col])
-    for col in ['start_datetime', 'end_datetime']:
-        if col in segments.columns:
-            segments[col] = pd.to_datetime(segments[col])
-    
-    vehicles.fillna({'current_odometer_km': 0, 'Current_location_id': 0}, inplace=True)
-    segments.fillna({'distance_travelled_km': 0}, inplace=True)
-    
+def clean_data(vehicles, locations, segments, location_relations=None):
+    for df in [vehicles, locations, segments]:
+        df.columns = df.columns.str.strip().str.lower()
+
+    if location_relations is not None:
+        location_relations.columns = location_relations.columns.str.strip().str.lower()
+
+        if 'relation_id' in segments.columns and 'id' in location_relations.columns:
+            segments = segments.merge(
+                location_relations[['id', 'dist']],
+                how='left',
+                left_on='relation_id',
+                right_on='id'
+            )
+            segments.rename(columns={'dist': 'distance_travelled_km'}, inplace=True)
+            segments.drop(columns=['id_y'], errors='ignore', inplace=True)
+            segments.rename(columns={'id_x': 'id'}, inplace=True)
+
     return vehicles, locations, segments
 
 def location_stats(segments, locations):
