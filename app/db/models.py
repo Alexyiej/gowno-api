@@ -5,6 +5,19 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from .connection import Base
 
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True)
+    brand = Column(String(100))
+    registration = Column(String(32))
+    total_mileage = Column(DECIMAL)
+    mileage_since_service = Column(DECIMAL)
+    service_interval = Column(DECIMAL)
+    yearly_mileage = Column(DECIMAL)
+    contract_limit = Column(DECIMAL)
+    description = Column(String(256))
+
 
 class Location(Base):
     __tablename__ = "locations"
@@ -20,6 +33,8 @@ class Location(Base):
     end_segments = relationship("Segment", foreign_keys="Segment.end_loc_id", back_populates="end_location")
     loc_relations1 = relationship("LocationRelation", foreign_keys="LocationRelation.id_loc_1", back_populates="loc1")
     loc_relations2 = relationship("LocationRelation", foreign_keys="LocationRelation.id_loc_2", back_populates="loc2")
+    
+    
 
 
 class LocationRelation(Base):
